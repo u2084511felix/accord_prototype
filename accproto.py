@@ -236,7 +236,7 @@ async def on_ready():
 @bot.event
 async def on_message(message):
 
-    if message.content.startswith("/start"):
+     if not session_name:
         await bot.process_commands(message)
         return
 
