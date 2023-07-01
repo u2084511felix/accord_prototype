@@ -35,28 +35,21 @@ with open("apikey.txt", 'r') as r:
 
 openai.api_key = OPENAI_API_KEY
 
-# This function takes the messages array and the model name as input and returns the generated text response from the Openai GPT large language model
 def llmagent(instruction_array, model, temperature):
-    # Create a boolean variable to check if the function failed
     failed = True
-    # Create a while loop to keep the function running until the response is returned
     while True:
         try:
-            # Try to generate a response from the model
             response = openai.ChatCompletion.create(
                 model=model,
                 temperature=temperature,
                 messages=instruction_array
             )
-            # Extract the response text from the response object
             responsestr = response.choices[0].message.content
             failed = False
 
         except Exception as e:
-            # Handle API error here, e.g. retry or log
             print(f"OpenAI API returned an API Error: {e}")
             
-        # If the model successfully responded, print the response and return the response text
         if failed == False:
             print(responsestr)
             return responsestr
@@ -131,17 +124,31 @@ class GenericButton(discord.ui.Button):
                  timeout = None):
         super().__init__(style=style, label=label, custom_id=custom_id)
         self.callback_func = callback
+        self.clickers = set()
+        self.id = custom_id
 
     async def callback(self, interaction: discord.Interaction):
-        await self.callback_func(interaction, self.custom_id)
+        if self.id == "ask":
+            print(self.id)
+            if dictionary[session_name]["participants"][interaction.user.name]["replies"] == []:
+                await interaction.user.send("You must provide a response, else say 'no reponse', before clicking 'finished'")
+                return
+            
+            if interaction.user.id in self.clickers:
+                await interaction.user.send("You have already clicked this button")
+                return
+        
+        if interaction.user.id in self.clickers:
+            await interaction.response.send_message("You have already clicked this button", ephemeral=True)
+            return
 
+        self.clickers.add(interaction.user.id)
+        await self.callback_func(interaction, self.custom_id)
 
 # -------------------------------------------------------------------------
 
 message_transcript = dict()
-
 dictionary = dict()
-
 session_name = ""
 
 
@@ -161,11 +168,11 @@ def add_participant(User):
         dictionary[session_name]["round_status"] = "active"
 
     if User.name not in dictionary[session_name]["participants"]:
-        dictionary[session_name]["participants"][User.name] = {"user": User, "status": "active"}
+        dictionary[session_name]["participants"][User.name] = {"user": User, "status": "active", "replies": []}
 
     else:
+        dictionary[session_name]["participants"][User.name]["replies"] = []
         dictionary[session_name]["participants"][User.name]["status"] = "active"
-    
 
 
 def generator_constructor(type):
@@ -198,8 +205,6 @@ def generator_convobot(model, temperature):
     dictionary[session_name]["generators"][2].add_user_msg("Participant Profiles: " + dictionary[session_name]["generators"][0].get_generated_text() + "  Discussion summary: " +   dictionary[session_name]["generators"][1].get_generated_text())
 
 
-
-
 def generator_reset():
     if dictionary[session_name]["generators"] is not None:
         for generator in dictionary[session_name]["generators"]:
@@ -210,16 +215,12 @@ def generator_reset():
         return
 
 
-
 async def send_summary():
     generator_summary(gpt46, 0)
     for participant in dictionary[session_name]["participants"]:
         await dictionary[session_name]["participants"][participant]["user"].send(f"Round over! \n\n{dictionary[session_name]['generators'][1].get_generated_text()}")
 
 
-'''
-await dictionary[session_name]["participants"][participant]["user"].send(f"Please reply to the summary message to query me about any aspect of the summary. Replying to     anyfollow up messages will get me to respond. Do not reply to this message.\n\nGo back to the group channel to discuss and start a new round when you are ready.")
-'''
 
 # -------------------------------------------------------------------------
 # Bot events.
@@ -245,16 +246,19 @@ async def on_message(message):
         message_transcript[session_name]["transcript"]
         return
     
-    if dictionary[session_name]["round_status"] == "active":
 
-        for participant in dictionary[session_name]["participants"]:
-            if message.channel == dictionary[session_name]["participants"][participant]["user"].dm_channel:
-                if message.author != bot.user:
-                    print("message from participant")
-                    message_transcript[session_name]["transcript"].append(f"{message.author.name}: {message.content}")
-                    message_transcript[session_name]["message"].append(message)
-                    print(message_transcript[session_name]["transcript"][-1])
-        return
+    if dictionary is not None:
+        if dictionary[session_name]["round_status"] == "active":
+
+            for participant in dictionary[session_name]["participants"]:
+                if message.channel == dictionary[session_name]["participants"][participant]["user"].dm_channel:
+                    if message.author != bot.user:
+                        print("message from participant")
+                        message_transcript[session_name]["transcript"].append(f"{message.author.name}: {message.content}")
+                        message_transcript[session_name]["message"].append(message)
+                        dictionary[session_name]["participants"][participant]["replies"].append(message)
+                        print(message_transcript[session_name]["transcript"][-1])
+            return
 
     if isinstance(message.channel, discord.DMChannel):   
         if message_transcript[session_name]["transcript"] is not None:
@@ -276,7 +280,7 @@ async def on_message(message):
 # -------------------------------------------------------------------------
 # Reply to bot methods: (called in on_message)
 
-# Wittybot reply
+# Accord reply
 
 async def runconvo(message):
 
@@ -292,7 +296,6 @@ async def runconvo(message):
 # -------------------------------------------------------------------------
 # Button Callback Methods:
 
-# Wittybot mystery prize troll button callback.
 async def button_action(interaction, custom_id):
     '''
     This method is called when the user clicks the button.
@@ -316,8 +319,10 @@ async def button_action(interaction, custom_id):
         await interaction.response.send_message(f"{clicker} has joined the deliberation", ephemeral=False)
     
     if custom_id == "ask":
+        if dictionary[session_name]["participants"][clicker]["replies"] is None:
+            return
         dictionary[session_name]["participants"][interaction.user.name]["status"] = "finished"
-
+        
         for participant in dictionary[session_name]["participants"]:
             if dictionary[session_name]["participants"][participant]["status"] == "active":
                 return
@@ -327,7 +332,25 @@ async def button_action(interaction, custom_id):
 
 
 #--------------------------------------------------------------------------
-# Bot commands
+# Session commands
+
+@bot.command(name="start")
+async def start_command(ctx, *, session_id):
+    session_name = session_id
+    create_session(session_name)
+    await ctx.send(f"Session {session_name} created")
+
+
+
+@bot.command(name="delib")
+async def deliberation_command(ctx, *, question):
+    dictionary[session_name]["round_question"] = question
+    button = GenericButton(style=discord.ButtonStyle.green, label='Join Deliberation', custom_id="deliberation", callback=button_action)
+    view = discord.ui.View()
+    view.add_item(button)
+    await ctx.send(f'{question}', view=view)
+
+
 
 @bot.command(name="query")  
 async def convo_roll(ctx):
@@ -340,28 +363,12 @@ async def convo_roll(ctx):
         print(f"Error occurred: {e}")
 
 
+
 @bot.command(name="altconvo")
 async def alter_convo(ctx, *, new_system_message):
     dictionary[session_name]["generators"][2].edit_sys_message(f"""{new_system_message}""")
 
 
-
-#----------------------------------------------------------------------------------
-# Button commands
-@bot.command(name="start")
-async def start_command(ctx, *, session_id):
-    session_name = session_id
-    create_session(session_name)
-    await ctx.send(f"Session {session_name} created")
-
-
-@bot.command(name="delib")
-async def deliberation_command(ctx, *, question):
-    dictionary[session_name]["round_question"] = question
-    button = GenericButton(style=discord.ButtonStyle.green, label='Join Deliberation', custom_id="deliberation", callback=button_action)
-    view = discord.ui.View()
-    view.add_item(button)
-    await ctx.send(f'{question}', view=view)
 
 
 # -------------------------------------------------------------------------
@@ -370,28 +377,27 @@ async def deliberation_command(ctx, *, question):
 @bot.command(name="cmdhelp")
 async def help(ctx):
     help_menu = """# -------------------------------------------
-    # Utilities
+    # Session commands:
+
+    /start <session_name> - prints this menu.
+    /delib <question> - starts a deliberation with the question.
+    /altconvo, <newsystemmessage>, changes the system message for the session summary reply-bot
+    /query - sends a message to all participants to query the bot for information about the session.
+
+ 
+    # -------------------------------------------
+
+    # Admin commands:
 
     /cmdhelp - prints this menu.
-    /scrape, channel, scope
-    /altconvo, channel, system message
-    /nuked, channel, scope, userId
-    /nukebot, channel, scope
 
-
-    # -------------------------------------------
-    # Buttons:
-
-    /troll, channel
-    /superbutton, channel
-
-    # -------------------------------------------
-    # Rubrik / Chat inits:
-
-    /random, channel, "snarky" or "super", scope
-    /witty, channel
-    /convo, channel, system message
-    /super, channel"""
+    /scrape, channel, scope - scrapes the channel for messages within the scope.
+    /shutdown - shuts down the bot.
+    /censor <channel> <user> <scope> - censors the user's messages in the channel within the scope.
+    /purge <channel> - purges all messages within the channel.
+    /purgecat <category> - purges all messages in each channel within the channel category.
+    
+    """
     print(help_menu)
 
 
