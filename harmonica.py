@@ -236,11 +236,11 @@ async def on_ready():
 @bot.event
 async def on_message(message):
 
-     if not session_name:
+    if not session_name:
         await bot.process_commands(message)
         return
 
-    if message.content.startswith("/fdeliberate"):
+    if message.content.startswith("/delib"):
         await bot.process_commands(message)
         message_transcript[session_name]["transcript"].append(f"{message.content[:12]}")
         message_transcript[session_name]["transcript"]
